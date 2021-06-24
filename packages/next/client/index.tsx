@@ -439,6 +439,53 @@ export async function render(renderingProps: RenderRouteInfo): Promise<void> {
   }
 }
 
+// This indicator is used to detect if loop occurs between `renderError` and
+// `componentDidCatch`. If there's one, fallback to the simple fallback error
+let renderErrorResolving = false
+// FallbackError component shows when unexpected error occurs on custom _error page
+class FallbackError<P = {}> extends React.Component<P & { err: Error }> {
+  static getInitialProps = ({ err }: { err: Error }) => ({ err })
+  render() {
+    const { err } = this.props
+    return (
+      <div style={fallbackErrorStyles.error}>
+        <style dangerouslySetInnerHTML={{ __html: 'body { margin: 0 }' }} />
+        <h2>
+          {err.name}
+          {`: `}
+          <small>{err.message}</small>
+        </h2>
+        <h4>
+          Application error: a client-side exception has occurred (
+          <a href="https://nextjs.org/docs/messages/client-side-exception-occurred">
+            developer guidance
+          </a>
+          )
+        </h4>
+        <pre style={fallbackErrorStyles.stack}>{err.stack}</pre>
+      </div>
+    )
+  }
+}
+
+const fallbackErrorStyles: { [k: string]: React.CSSProperties } = {
+  error: {
+    color: '#000',
+    background: '#fff',
+    fontFamily:
+      '-apple-system, BlinkMacSystemFont, Roboto, "Segoe UI", "Fira Sans", Avenir, "Helvetica Neue", "Lucida Grande", sans-serif',
+    height: '100vh',
+    textAlign: 'center',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stack: {
+    textAlign: 'left',
+  },
+}
+
 // This method handles all runtime and debug errors.
 // 404 and 500 errors are special kind of errors
 // and they are still handle via the main render method.
@@ -464,8 +511,12 @@ export function renderError(renderErrorProps: RenderErrorProps): Promise<any> {
 
   // Make sure we log the error to the console, otherwise users can't track down issues.
   console.error(err)
-  return pageLoader
-    .loadPage('/_error')
+  const errorComponentPromise = renderErrorResolving
+    ? Promise.resolve({ page: FallbackError, styleSheets: [] })
+    : pageLoader.loadPage('/_error')
+
+  renderErrorResolving = true
+  return errorComponentPromise
     .then(({ page: ErrorComponent, styleSheets }) => {
       // In production we do a normal render with the `ErrorComponent` as component.
       // If we've gotten here upon initial render, we can use the props from the server.
@@ -488,6 +539,8 @@ export function renderError(renderErrorProps: RenderErrorProps): Promise<any> {
           Component: ErrorComponent,
           styleSheets,
           props: initProps,
+        }).then(() => {
+          renderErrorResolving = false
         })
       )
     })
